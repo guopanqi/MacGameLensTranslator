@@ -43,7 +43,6 @@ struct AppSettings: Codable {
     var qwenModelName: String
     var targetLanguage: String
     var sourceLanguage: String
-    var hotkey: String
     var fontSizeScale: Double
     var overlayOpacity: Double
     var overlayLevelMode: OverlayLevelMode
@@ -51,6 +50,11 @@ struct AppSettings: Codable {
     var maxTextBlocks: Int
     var maxTotalCharacters: Int
     var debugModeEnabled: Bool
+    var regionHotkey: String
+    var windowHotkey: String
+    var fullScreenHotkey: String
+    var clearOverlayHotkey: String
+    var showLastOverlayHotkey: String
 
     private enum CodingKeys: String, CodingKey {
         case deepSeekAPIKey
@@ -60,7 +64,6 @@ struct AppSettings: Codable {
         case qwenModelName
         case targetLanguage
         case sourceLanguage
-        case hotkey
         case fontSizeScale
         case overlayOpacity
         case overlayLevelMode
@@ -68,6 +71,11 @@ struct AppSettings: Codable {
         case maxTextBlocks
         case maxTotalCharacters
         case debugModeEnabled
+        case regionHotkey
+        case windowHotkey
+        case fullScreenHotkey
+        case clearOverlayHotkey
+        case showLastOverlayHotkey
     }
 
     static let `default` = AppSettings(
@@ -78,14 +86,18 @@ struct AppSettings: Codable {
         qwenModelName: "qwen-mt-lite",
         targetLanguage: "Simplified Chinese",
         sourceLanguage: "Auto",
-        hotkey: "Command + Shift + T",
         fontSizeScale: 1.0,
         overlayOpacity: 0.75,
         overlayLevelMode: .normal,
         autoClearSeconds: nil,
         maxTextBlocks: 50,
         maxTotalCharacters: 10000,
-        debugModeEnabled: false
+        debugModeEnabled: false,
+        regionHotkey: "Command + Shift + T",
+        windowHotkey: "Command + Shift + W",
+        fullScreenHotkey: "",
+        clearOverlayHotkey: "Command + Shift + C",
+        showLastOverlayHotkey: ""
     )
 
     init(
@@ -96,14 +108,18 @@ struct AppSettings: Codable {
         qwenModelName: String,
         targetLanguage: String,
         sourceLanguage: String,
-        hotkey: String,
         fontSizeScale: Double,
         overlayOpacity: Double,
         overlayLevelMode: OverlayLevelMode,
         autoClearSeconds: Double?,
         maxTextBlocks: Int,
         maxTotalCharacters: Int,
-        debugModeEnabled: Bool
+        debugModeEnabled: Bool,
+        regionHotkey: String,
+        windowHotkey: String,
+        fullScreenHotkey: String,
+        clearOverlayHotkey: String,
+        showLastOverlayHotkey: String
     ) {
         self.deepSeekAPIKey = deepSeekAPIKey
         self.qwenAPIKey = qwenAPIKey
@@ -112,7 +128,6 @@ struct AppSettings: Codable {
         self.qwenModelName = qwenModelName
         self.targetLanguage = targetLanguage
         self.sourceLanguage = sourceLanguage
-        self.hotkey = hotkey
         self.fontSizeScale = fontSizeScale
         self.overlayOpacity = overlayOpacity
         self.overlayLevelMode = overlayLevelMode
@@ -120,6 +135,11 @@ struct AppSettings: Codable {
         self.maxTextBlocks = maxTextBlocks
         self.maxTotalCharacters = maxTotalCharacters
         self.debugModeEnabled = debugModeEnabled
+        self.regionHotkey = regionHotkey
+        self.windowHotkey = windowHotkey
+        self.fullScreenHotkey = fullScreenHotkey
+        self.clearOverlayHotkey = clearOverlayHotkey
+        self.showLastOverlayHotkey = showLastOverlayHotkey
     }
 
     init(from decoder: Decoder) throws {
@@ -133,7 +153,6 @@ struct AppSettings: Codable {
         qwenModelName = try container.decodeIfPresent(String.self, forKey: .qwenModelName) ?? d.qwenModelName
         targetLanguage = try container.decodeIfPresent(String.self, forKey: .targetLanguage) ?? d.targetLanguage
         sourceLanguage = try container.decodeIfPresent(String.self, forKey: .sourceLanguage) ?? d.sourceLanguage
-        hotkey = try container.decodeIfPresent(String.self, forKey: .hotkey) ?? d.hotkey
         fontSizeScale = try container.decodeIfPresent(Double.self, forKey: .fontSizeScale) ?? d.fontSizeScale
         overlayOpacity = try container.decodeIfPresent(Double.self, forKey: .overlayOpacity) ?? d.overlayOpacity
         overlayLevelMode = try container.decodeIfPresent(OverlayLevelMode.self, forKey: .overlayLevelMode) ?? d.overlayLevelMode
@@ -141,6 +160,11 @@ struct AppSettings: Codable {
         maxTextBlocks = try container.decodeIfPresent(Int.self, forKey: .maxTextBlocks) ?? d.maxTextBlocks
         maxTotalCharacters = try container.decodeIfPresent(Int.self, forKey: .maxTotalCharacters) ?? d.maxTotalCharacters
         debugModeEnabled = try container.decodeIfPresent(Bool.self, forKey: .debugModeEnabled) ?? d.debugModeEnabled
+        regionHotkey = try container.decodeIfPresent(String.self, forKey: .regionHotkey) ?? d.regionHotkey
+        windowHotkey = try container.decodeIfPresent(String.self, forKey: .windowHotkey) ?? d.windowHotkey
+        fullScreenHotkey = try container.decodeIfPresent(String.self, forKey: .fullScreenHotkey) ?? d.fullScreenHotkey
+        clearOverlayHotkey = try container.decodeIfPresent(String.self, forKey: .clearOverlayHotkey) ?? d.clearOverlayHotkey
+        showLastOverlayHotkey = try container.decodeIfPresent(String.self, forKey: .showLastOverlayHotkey) ?? d.showLastOverlayHotkey
     }
 }
 

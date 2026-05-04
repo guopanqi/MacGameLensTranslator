@@ -5,8 +5,10 @@ import Foundation
 final class AppDelegate: NSObject, NSApplicationDelegate {
     let logger = Logger(subsystem: "com.macgamelens.translator", category: "app")
     let menuBarController = MenuBarController()
-    let hotkeyManager = HotkeyManager()
+    let hotkeyManager: HotkeyManager
+    let settingsStore = SettingsStore()
     let coordinator: LensTranslationCoordinator
+    private var shortcutsObserver: NSObjectProtocol?
 
     override init() {
         // Redirect stdout and stderr to a log file for debugging
@@ -19,7 +21,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Also flush after every print
         setbuf(stdout, nil)
 
-        let settingsStore = SettingsStore()
+        hotkeyManager = HotkeyManager(settingsStore: settingsStore)
         let captureService = ScreenCaptureKitCaptureService()
         let ocrService = VisionOCRService()
         let filter = TextBlockFilter()
@@ -72,11 +74,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         print("[MGLT] Log file: /tmp/mglt_debug.log")
         logger.info("Mac Game Lens Translator launching")
         menuBarController.configure(coordinator: coordinator)
+        menuBarController.reloadShortcuts(from: settingsStore.settings)
         hotkeyManager.configure(coordinator: coordinator)
         menuBarController.checkPermissionsOnLaunch()
+
+        shortcutsObserver = NotificationCenter.default.addObserver(
+            forName: .shortcutsDidChange,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            guard let self = self else { return }
+            let settings = self.settingsStore.settings
+            self.menuBarController.reloadShortcuts(from: settings)
+            self.hotkeyManager.reloadShortcuts()
+            print("[MGLT] Shortcuts reloaded via notification")
+        }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
         logger.info("Mac Game Lens Translator terminating")
+        hotkeyManager.unregisterAll()
     }
 }

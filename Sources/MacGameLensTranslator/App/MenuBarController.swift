@@ -19,11 +19,47 @@ final class MenuBarController {
         print("[MacGameLens] Menu bar configured")
     }
 
+    func reloadShortcuts(from settings: AppSettings) {
+        applyShortcut(settings.regionHotkey, to: translateRegionItem)
+        applyShortcut(settings.fullScreenHotkey, to: translateFullScreenItem)
+        applyShortcut(settings.windowHotkey, to: translateWindowItem)
+        applyShortcut(settings.clearOverlayHotkey, to: clearOverlayItem)
+        applyShortcut(settings.showLastOverlayHotkey, to: showLastOverlayItem)
+    }
+
+    private func applyShortcut(_ shortcut: String, to item: NSMenuItem?) {
+        guard let item = item else { return }
+        if shortcut.isEmpty {
+            item.keyEquivalent = ""
+            item.keyEquivalentModifierMask = []
+        } else {
+            let parts = shortcut.components(separatedBy: " + ").map { $0.trimmingCharacters(in: .whitespaces) }
+            item.keyEquivalent = parts.last?.lowercased() ?? ""
+            var mask: NSEvent.ModifierFlags = []
+            for part in parts.dropLast() {
+                switch part.lowercased() {
+                case "command": mask.insert(.command)
+                case "shift": mask.insert(.shift)
+                case "option", "alt": mask.insert(.option)
+                case "control", "ctrl": mask.insert(.control)
+                default: break
+                }
+            }
+            item.keyEquivalentModifierMask = mask
+        }
+    }
+
     func checkPermissionsOnLaunch() {
         let preflightGranted = PermissionController.checkScreenRecordingPermission()
         print("[MacGameLens] Screen recording preflight: \(preflightGranted)")
         updatePermissionStatus(useCaptureTest: false)
     }
+
+    private var translateRegionItem: NSMenuItem?
+    private var translateFullScreenItem: NSMenuItem?
+    private var translateWindowItem: NSMenuItem?
+    private var clearOverlayItem: NSMenuItem?
+    private var showLastOverlayItem: NSMenuItem?
 
     private func setupStatusItem() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -51,16 +87,19 @@ final class MenuBarController {
         let translateItem = NSMenuItem(title: "Translate Region", action: #selector(triggerTranslate), keyEquivalent: "t")
         translateItem.keyEquivalentModifierMask = [.command, .shift]
         translateItem.target = self
+        self.translateRegionItem = translateItem
         menu.addItem(translateItem)
 
         let fullScreenItem = NSMenuItem(title: "Translate Full Screen", action: #selector(triggerFullScreenTranslate), keyEquivalent: "f")
         fullScreenItem.keyEquivalentModifierMask = [.command, .shift]
         fullScreenItem.target = self
+        self.translateFullScreenItem = fullScreenItem
         menu.addItem(fullScreenItem)
 
         let focusedWindowItem = NSMenuItem(title: "Translate Focused Window", action: #selector(triggerFocusedWindowTranslate), keyEquivalent: "w")
         focusedWindowItem.keyEquivalentModifierMask = [.command, .shift]
         focusedWindowItem.target = self
+        self.translateWindowItem = focusedWindowItem
         menu.addItem(focusedWindowItem)
 
         let regionControlItem = NSMenuItem(title: "Region Control Mode", action: #selector(triggerRegionControlMode), keyEquivalent: "r")
@@ -71,10 +110,12 @@ final class MenuBarController {
         let clearItem = NSMenuItem(title: "Clear Overlay", action: #selector(triggerClear), keyEquivalent: "c")
         clearItem.keyEquivalentModifierMask = [.command, .shift]
         clearItem.target = self
+        self.clearOverlayItem = clearItem
         menu.addItem(clearItem)
 
         let showLastItem = NSMenuItem(title: "Show Last Overlay", action: #selector(triggerShowLastOverlay), keyEquivalent: "")
         showLastItem.target = self
+        self.showLastOverlayItem = showLastItem
         menu.addItem(showLastItem)
 
         menu.addItem(NSMenuItem.separator())

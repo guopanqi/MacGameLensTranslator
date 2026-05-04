@@ -2,29 +2,55 @@ import AppKit
 import Carbon
 import os
 
+enum HotkeyAction: UInt32, CaseIterable {
+    case translateRegion = 1
+    case translateWindow = 2
+    case translateFullScreen = 3
+    case clearOverlay = 4
+    case showLastOverlay = 5
+}
+
 final class HotkeyManager {
-    private var regionHotkeyRef: EventHotKeyRef?
-    private var focusedWindowHotkeyRef: EventHotKeyRef?
-    private var regionControlHotkeyRef: EventHotKeyRef?
-    private var clearOverlayHotkeyRef: EventHotKeyRef?
+    private var hotkeyRefs: [HotkeyAction: EventHotKeyRef?] = [:]
     private var eventHandlerRef: EventHandlerRef?
     private weak var coordinator: LensTranslationCoordinator?
+    private let settingsStore: SettingsStore
     private let logger = Logger(subsystem: "com.macgamelens.translator", category: "hotkey")
 
-    private let signature: OSType = 0x4D474C54 // "MGLT"
-    private let regionHotkeyID: UInt32 = 1
-    private let focusedWindowHotkeyID: UInt32 = 2
-    private let regionControlHotkeyID: UInt32 = 3
-    private let clearOverlayHotkeyID: UInt32 = 4
-    private let defaultModifiers: UInt32 = UInt32(cmdKey | shiftKey)
+    private let signature: OSType = 0x4D474C54
+
+    private var keyCodeMap: [String: UInt32] {
+        [
+            "A": 0, "S": 1, "D": 2, "F": 3, "H": 4, "G": 5,
+            "Z": 6, "X": 7, "C": 8, "V": 9,
+            "B": 11, "Q": 12, "W": 13, "E": 14, "R": 15,
+            "Y": 16, "T": 17,
+            "1": 18, "2": 19, "3": 20, "4": 21, "6": 22, "5": 23,
+            "=": 24, "9": 25, "7": 26, "-": 27, "8": 28, "0": 29,
+            "]": 30, "O": 31, "U": 32, "[": 33, "I": 34, "P": 35,
+            "L": 37, "J": 38, "'": 39, "K": 40, ";": 41, "\\": 42,
+            ",": 43, "/": 44, "N": 45, "M": 46, ".": 47,
+            "Space": 49,
+        ]
+    }
+
+    init(settingsStore: SettingsStore) {
+        self.settingsStore = settingsStore
+    }
 
     func configure(coordinator: LensTranslationCoordinator) {
         self.coordinator = coordinator
+        registerHandler()
         registerHotkeys()
     }
 
-    func registerHotkeys() {
-        unregisterHotkey()
+    func reloadShortcuts() {
+        unregisterHotkeys()
+        registerHotkeys()
+    }
+
+    private func registerHandler() {
+        if eventHandlerRef != nil { return }
 
         var gHotKeyEventSpec = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: OSType(kEventHotKeyPressed))
 
@@ -43,61 +69,51 @@ final class HotkeyManager {
             &eventHandlerRef
         )
 
-        guard status == noErr else {
+        if status != noErr {
             logger.error("Failed to install event handler: \(status)")
-            return
-        }
-
-        let regionID = EventHotKeyID(signature: signature, id: regionHotkeyID)
-        let regionStatus = RegisterEventHotKey(17, defaultModifiers, regionID, GetApplicationEventTarget(), 0, &regionHotkeyRef) // T
-        if regionStatus != noErr {
-            logger.error("Failed to register region hotkey: \(regionStatus)")
-        } else {
-            logger.info("Region hotkey registered successfully")
-        }
-
-        let focusedWindowID = EventHotKeyID(signature: signature, id: focusedWindowHotkeyID)
-        let focusedStatus = RegisterEventHotKey(13, defaultModifiers, focusedWindowID, GetApplicationEventTarget(), 0, &focusedWindowHotkeyRef) // W
-        if focusedStatus != noErr {
-            logger.error("Failed to register focused window hotkey: \(focusedStatus)")
-        } else {
-            logger.info("Focused window hotkey registered successfully")
-        }
-
-        let regionControlID = EventHotKeyID(signature: signature, id: regionControlHotkeyID)
-        let regionControlStatus = RegisterEventHotKey(15, defaultModifiers, regionControlID, GetApplicationEventTarget(), 0, &regionControlHotkeyRef) // R
-        if regionControlStatus != noErr {
-            logger.error("Failed to register region control hotkey: \(regionControlStatus)")
-        } else {
-            logger.info("Region control hotkey registered successfully")
-        }
-
-        let clearOverlayID = EventHotKeyID(signature: signature, id: clearOverlayHotkeyID)
-        let clearStatus = RegisterEventHotKey(8, defaultModifiers, clearOverlayID, GetApplicationEventTarget(), 0, &clearOverlayHotkeyRef) // C
-        if clearStatus != noErr {
-            logger.error("Failed to register clear overlay hotkey: \(clearStatus)")
-        } else {
-            logger.info("Clear overlay hotkey registered successfully")
         }
     }
 
-    func unregisterHotkey() {
-        if let ref = regionHotkeyRef {
-            UnregisterEventHotKey(ref)
-            regionHotkeyRef = nil
+    private func registerHotkeys() {
+        let s = settingsStore.settings
+        let mappings: [(HotkeyAction, String)] = [
+            (.translateRegion, s.regionHotkey),
+            (.translateWindow, s.windowHotkey),
+            (.translateFullScreen, s.fullScreenHotkey),
+            (.clearOverlay, s.clearOverlayHotkey),
+            (.showLastOverlay, s.showLastOverlayHotkey),
+        ]
+
+        for (action, shortcutString) in mappings {
+            guard !shortcutString.isEmpty else { continue }
+            guard let (keyCode, modifiers) = parseShortcut(shortcutString) else {
+                logger.error("Failed to parse shortcut: \(shortcutString)")
+                continue
+            }
+
+            var ref: EventHotKeyRef?
+            let hotkeyID = EventHotKeyID(signature: signature, id: action.rawValue)
+            let status = RegisterEventHotKey(keyCode, modifiers, hotkeyID, GetApplicationEventTarget(), 0, &ref)
+            if status == noErr, let ref = ref {
+                hotkeyRefs[action] = ref
+                logger.info("Registered hotkey for \(action.rawValue): \(shortcutString)")
+            } else {
+                logger.error("Failed to register hotkey for \(action.rawValue): \(status)")
+            }
         }
-        if let ref = focusedWindowHotkeyRef {
-            UnregisterEventHotKey(ref)
-            focusedWindowHotkeyRef = nil
+    }
+
+    func unregisterHotkeys() {
+        for (_, ref) in hotkeyRefs {
+            if let ref = ref {
+                UnregisterEventHotKey(ref)
+            }
         }
-        if let ref = regionControlHotkeyRef {
-            UnregisterEventHotKey(ref)
-            regionControlHotkeyRef = nil
-        }
-        if let ref = clearOverlayHotkeyRef {
-            UnregisterEventHotKey(ref)
-            clearOverlayHotkeyRef = nil
-        }
+        hotkeyRefs.removeAll()
+    }
+
+    func unregisterAll() {
+        unregisterHotkeys()
         if let handlerRef = eventHandlerRef {
             RemoveEventHandler(handlerRef)
             eventHandlerRef = nil
@@ -118,21 +134,48 @@ final class HotkeyManager {
             )
         }
 
+        guard let action = HotkeyAction(rawValue: hotkeyID.id) else { return }
+
         Task { @MainActor in
-            switch hotkeyID.id {
-            case focusedWindowHotkeyID:
-                logger.debug("Focused window hotkey pressed")
+            switch action {
+            case .translateRegion:
+                logger.debug("Translate region hotkey pressed")
+                await coordinator?.toggleTranslation()
+            case .translateWindow:
+                logger.debug("Translate window hotkey pressed")
                 await coordinator?.translateFocusedWindow()
-            case regionControlHotkeyID:
-                logger.debug("Region control hotkey pressed")
-                coordinator?.showRegionControlMode()
-            case clearOverlayHotkeyID:
+            case .translateFullScreen:
+                logger.debug("Translate full screen hotkey pressed")
+                await coordinator?.translateFullScreen()
+            case .clearOverlay:
                 logger.debug("Clear overlay hotkey pressed")
                 await coordinator?.clearOverlay()
-            default:
-                logger.debug("Region hotkey pressed")
-                await coordinator?.toggleTranslation()
+            case .showLastOverlay:
+                logger.debug("Show last overlay hotkey pressed")
+                await coordinator?.showLastOverlay()
             }
         }
+    }
+
+    private func parseShortcut(_ shortcut: String) -> (keyCode: UInt32, modifiers: UInt32)? {
+        let parts = shortcut.components(separatedBy: " + ").map { $0.trimmingCharacters(in: .whitespaces) }
+        guard parts.count >= 2, let keyPart = parts.last else { return nil }
+
+        guard let keyCode = keyCodeMap[keyPart.uppercased()] else { return nil }
+
+        var modifiers: UInt32 = 0
+        for part in parts.dropLast() {
+            switch part.lowercased() {
+            case "command": modifiers |= UInt32(cmdKey)
+            case "shift": modifiers |= UInt32(shiftKey)
+            case "option", "alt": modifiers |= UInt32(optionKey)
+            case "control", "ctrl": modifiers |= UInt32(controlKey)
+            default: break
+            }
+        }
+
+        guard modifiers != 0 else { return nil }
+
+        return (keyCode, modifiers)
     }
 }

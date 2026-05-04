@@ -1,4 +1,9 @@
 import SwiftUI
+import Foundation
+
+extension Notification.Name {
+    static let shortcutsDidChange = Notification.Name("MGLTShortcutsDidChange")
+}
 
 struct SettingsView: View {
     @StateObject private var viewModel = SettingsViewModel()
@@ -24,8 +29,13 @@ struct SettingsView: View {
                 .tabItem {
                     Label("Overlay", systemImage: "rectangle.on.rectangle")
                 }
+
+            ShortcutsTab(viewModel: viewModel)
+                .tabItem {
+                    Label("Shortcuts", systemImage: "keyboard")
+                }
         }
-        .frame(width: 480, height: 360)
+        .frame(width: 500, height: 400)
         .padding()
     }
 }
@@ -47,6 +57,13 @@ final class SettingsViewModel: ObservableObject {
     @Published var maxTextBlocks: Int
     @Published var maxTotalCharacters: Int
     @Published var debugModeEnabled: Bool
+    @Published var regionHotkey: String
+    @Published var windowHotkey: String
+    @Published var fullScreenHotkey: String
+    @Published var clearOverlayHotkey: String
+    @Published var showLastOverlayHotkey: String
+
+    private var previousShortcuts: [String] = []
 
     init() {
         let s = SettingsStore().settings
@@ -63,9 +80,18 @@ final class SettingsViewModel: ObservableObject {
         maxTextBlocks = s.maxTextBlocks
         maxTotalCharacters = s.maxTotalCharacters
         debugModeEnabled = s.debugModeEnabled
+        regionHotkey = s.regionHotkey
+        windowHotkey = s.windowHotkey
+        fullScreenHotkey = s.fullScreenHotkey
+        clearOverlayHotkey = s.clearOverlayHotkey
+        showLastOverlayHotkey = s.showLastOverlayHotkey
+        previousShortcuts = [regionHotkey, windowHotkey, fullScreenHotkey, clearOverlayHotkey, showLastOverlayHotkey]
     }
 
     func save() {
+        let currentShortcuts = [regionHotkey, windowHotkey, fullScreenHotkey, clearOverlayHotkey, showLastOverlayHotkey]
+        let shortcutsChanged = currentShortcuts != previousShortcuts
+
         var s = settingsStore.settings
         s.deepSeekAPIKey = deepSeekAPIKey
         s.qwenAPIKey = qwenAPIKey
@@ -80,7 +106,16 @@ final class SettingsViewModel: ObservableObject {
         s.maxTextBlocks = maxTextBlocks
         s.maxTotalCharacters = maxTotalCharacters
         s.debugModeEnabled = debugModeEnabled
+        s.regionHotkey = regionHotkey
+        s.windowHotkey = windowHotkey
+        s.fullScreenHotkey = fullScreenHotkey
+        s.clearOverlayHotkey = clearOverlayHotkey
+        s.showLastOverlayHotkey = showLastOverlayHotkey
         settingsStore.settings = s
+        if shortcutsChanged {
+            previousShortcuts = currentShortcuts
+            NotificationCenter.default.post(name: .shortcutsDidChange, object: nil)
+        }
     }
 }
 
@@ -157,6 +192,132 @@ struct OverlaySettingsTab: View {
                 .onChange(of: viewModel.debugModeEnabled) { _ in viewModel.save() }
                 .help("Shows OCR bounding boxes, confidence scores, and timing info")
         }
+    }
+}
+
+struct ShortcutsTab: View {
+    @ObservedObject var viewModel: SettingsViewModel
+
+    var body: some View {
+        Form {
+            ShortcutRecorder(title: "Translate Region", shortcut: $viewModel.regionHotkey, onChange: viewModel.save)
+            ShortcutRecorder(title: "Translate Window", shortcut: $viewModel.windowHotkey, onChange: viewModel.save)
+            ShortcutRecorder(title: "Translate Full Screen", shortcut: $viewModel.fullScreenHotkey, onChange: viewModel.save)
+            ShortcutRecorder(title: "Clear Overlay", shortcut: $viewModel.clearOverlayHotkey, onChange: viewModel.save)
+            ShortcutRecorder(title: "Show Last Overlay", shortcut: $viewModel.showLastOverlayHotkey, onChange: viewModel.save)
+        }
+        .padding(.top, 8)
+    }
+}
+
+struct ShortcutRecorder: View {
+    let title: String
+    @Binding var shortcut: String
+    var onChange: () -> Void
+
+    @State private var isRecording = false
+    @State private var eventMonitor: Any?
+
+    var body: some View {
+        HStack {
+            Text(title)
+                .frame(width: 160, alignment: .trailing)
+
+            ZStack {
+                RoundedRectangle(cornerRadius: 4)
+                    .stroke(isRecording ? Color.accentColor : Color.gray.opacity(0.3), lineWidth: 1)
+                    .frame(width: 180, height: 26)
+
+                if isRecording {
+                    Text("Type shortcut...")
+                        .foregroundColor(.secondary)
+                        .font(.caption)
+                } else if shortcut.isEmpty {
+                    Text("None")
+                        .foregroundColor(.secondary)
+                        .font(.caption)
+                } else {
+                    Text(shortcutDisplayName)
+                        .font(.caption)
+                        .fontWeight(.medium)
+                }
+            }
+            .onTapGesture {
+                isRecording = true
+            }
+
+            if isRecording {
+                Button("Cancel") { stopRecording() }
+            } else if !shortcut.isEmpty {
+                Button("Clear") { shortcut = ""; onChange() }
+            }
+        }
+        .onChange(of: isRecording) { recording in
+            if recording { startRecording() } else { stopRecording() }
+        }
+    }
+
+    private func startRecording() {
+        eventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+            guard modifiers != [] else { return event }
+
+            let keyCode = event.keyCode
+            guard let char = ShortcutRecorder.keyCodeToChar[keyCode] else {
+                return event
+            }
+
+            var parts: [String] = []
+            if modifiers.contains(.command) { parts.append("Command") }
+            if modifiers.contains(.shift) { parts.append("Shift") }
+            if modifiers.contains(.option) { parts.append("Option") }
+            if modifiers.contains(.control) { parts.append("Control") }
+            parts.append(char)
+
+            shortcut = parts.joined(separator: " + ")
+            isRecording = false
+            onChange()
+            return nil
+        }
+    }
+
+    static let keyCodeToChar: [UInt16: String] = [
+        0: "A", 1: "S", 2: "D", 3: "F", 4: "H", 5: "G",
+        6: "Z", 7: "X", 8: "C", 9: "V",
+        11: "B", 12: "Q", 13: "W", 14: "E", 15: "R",
+        16: "Y", 17: "T",
+        18: "1", 19: "2", 20: "3", 21: "4", 22: "6", 23: "5",
+        24: "=", 25: "9", 26: "7", 27: "-", 28: "8", 29: "0",
+        30: "]", 31: "O", 32: "U", 33: "[", 34: "I", 35: "P",
+        37: "L", 38: "J", 39: "'", 40: "K", 41: ";", 42: "\\",
+        43: ",", 44: "/", 45: "N", 46: "M", 47: ".",
+        49: "Space",
+    ]
+
+    private func stopRecording() {
+        if let monitor = eventMonitor {
+            NSEvent.removeMonitor(monitor)
+            eventMonitor = nil
+        }
+        isRecording = false
+    }
+
+    private var shortcutDisplayName: String {
+        let parts = shortcut.components(separatedBy: " + ").map { $0.trimmingCharacters(in: .whitespaces) }
+        var result = ""
+        for part in parts.dropLast() {
+            switch part.lowercased() {
+            case "command": result += "⌘"
+            case "shift": result += "⇧"
+            case "option", "alt": result += "⌥"
+            case "control", "ctrl": result += "⌃"
+            default: result += part
+            }
+        }
+        if let key = parts.last {
+            result += key.uppercased()
+        }
+        return result
     }
 }
 
