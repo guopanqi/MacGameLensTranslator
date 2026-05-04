@@ -58,7 +58,18 @@ final class MenuBarController {
         fullScreenItem.target = self
         menu.addItem(fullScreenItem)
 
-        let clearItem = NSMenuItem(title: "Clear Overlay", action: #selector(triggerClear), keyEquivalent: "")
+        let focusedWindowItem = NSMenuItem(title: "Translate Focused Window", action: #selector(triggerFocusedWindowTranslate), keyEquivalent: "w")
+        focusedWindowItem.keyEquivalentModifierMask = [.command, .shift]
+        focusedWindowItem.target = self
+        menu.addItem(focusedWindowItem)
+
+        let regionControlItem = NSMenuItem(title: "Region Control Mode", action: #selector(triggerRegionControlMode), keyEquivalent: "r")
+        regionControlItem.keyEquivalentModifierMask = [.command, .shift]
+        regionControlItem.target = self
+        menu.addItem(regionControlItem)
+
+        let clearItem = NSMenuItem(title: "Clear Overlay", action: #selector(triggerClear), keyEquivalent: "c")
+        clearItem.keyEquivalentModifierMask = [.command, .shift]
         clearItem.target = self
         menu.addItem(clearItem)
 
@@ -128,6 +139,26 @@ final class MenuBarController {
                 }
             }
         }
+    }
+
+    @objc private func triggerFocusedWindowTranslate() {
+        print("[MacGameLens] Focused window translate triggered from menu")
+        statusItem?.button?.title = "⟳"
+        Task {
+            await coordinator?.translateFocusedWindow()
+            await MainActor.run {
+                if let latestStatus {
+                    updateStatus(latestStatus)
+                } else {
+                    statusItem?.button?.title = coordinator?.isIdle == true ? "译" : "..."
+                }
+            }
+        }
+    }
+
+    @objc private func triggerRegionControlMode() {
+        print("[MacGameLens] Region control mode triggered from menu")
+        coordinator?.showRegionControlMode()
     }
 
     @objc private func triggerClear() {

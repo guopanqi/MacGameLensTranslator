@@ -70,6 +70,53 @@ final class TextBlockMergerTests: XCTestCase {
         XCTAssertEqual(blocks.count, 1)
     }
 
+    func testMergeSameLineAdjacentText() {
+        let merger = TextBlockMerger()
+        let pixelSize = CGSize(width: 1000, height: 1000)
+        let scaleFactor: CGFloat = 1.0
+
+        let marker = OCRTextObservation(
+            id: UUID(),
+            text: "3.",
+            confidence: 0.9,
+            boundingBox: CGRect(x: 0.10, y: 0.50, width: 0.03, height: 0.03)
+        )
+        let option = OCRTextObservation(
+            id: UUID(),
+            text: "Leave",
+            confidence: 0.9,
+            boundingBox: CGRect(x: 0.15, y: 0.50, width: 0.08, height: 0.03)
+        )
+
+        let blocks = merger.merge([marker, option], pixelSize: pixelSize, scaleFactor: scaleFactor)
+
+        XCTAssertEqual(blocks.count, 1)
+        XCTAssertEqual(blocks[0].sourceText, "3. Leave")
+    }
+
+    func testDoNotMergeSameLineFarApartText() {
+        let merger = TextBlockMerger()
+        let pixelSize = CGSize(width: 1000, height: 1000)
+        let scaleFactor: CGFloat = 1.0
+
+        let leftButton = OCRTextObservation(
+            id: UUID(),
+            text: "Accept",
+            confidence: 0.9,
+            boundingBox: CGRect(x: 0.10, y: 0.50, width: 0.08, height: 0.03)
+        )
+        let rightButton = OCRTextObservation(
+            id: UUID(),
+            text: "Cancel",
+            confidence: 0.9,
+            boundingBox: CGRect(x: 0.70, y: 0.50, width: 0.08, height: 0.03)
+        )
+
+        let blocks = merger.merge([leftButton, rightButton], pixelSize: pixelSize, scaleFactor: scaleFactor)
+
+        XCTAssertEqual(blocks.count, 2)
+    }
+
     func testLowConfidenceFilteredBeforeMerge() {
         let filter = TextBlockFilter(minimumConfidence: 0.5)
         let merger = TextBlockMerger()

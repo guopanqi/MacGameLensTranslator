@@ -11,7 +11,8 @@ enum TextNormalizer {
 
     static func normalizeForCache(_ text: String, sourceLanguage: String) -> String {
         var result = normalize(text)
-        if sourceLanguage.lowercased().hasPrefix("en") || sourceLanguage.lowercased() == "auto" {
+        let language = sourceLanguage.lowercased().split(separator: ":").last.map(String.init) ?? sourceLanguage.lowercased()
+        if language.hasPrefix("en") || language == "auto" {
             result = result.lowercased()
         }
         return result

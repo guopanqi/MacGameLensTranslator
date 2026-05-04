@@ -10,7 +10,6 @@ final class DeepSeekTranslationService: TranslationService {
     private let logger = Logger(subsystem: "com.macgamelens.translator", category: "translation")
 
     private let baseURL = "https://api.deepseek.com/v1/chat/completions"
-    private let model = "deepseek-v4-flash"
 
     init(
         promptBuilder: TranslationPromptBuilder,
@@ -29,7 +28,8 @@ final class DeepSeekTranslationService: TranslationService {
     func translate(_ blocks: [TextBlock], targetLanguage: String) async throws -> [TextBlock] {
         guard !blocks.isEmpty else { return [] }
 
-        let apiKey = settingsStore.settings.deepSeekAPIKey
+        let settings = settingsStore.settings
+        let apiKey = settings.deepSeekAPIKey
         guard !apiKey.isEmpty else {
             throw TranslationError.noAPIKey
         }
@@ -43,7 +43,7 @@ final class DeepSeekTranslationService: TranslationService {
         ) }
 
         // Check cache
-        let sourceLanguage = settingsStore.settings.sourceLanguage
+        let sourceLanguage = "deepseek:\(settings.sourceLanguage)"
         var uncached: [TextBlock] = []
         for block in results {
             if let cached = cache.get(sourceText: block.sourceText, targetLanguage: targetLanguage, sourceLanguage: sourceLanguage) {
@@ -61,7 +61,7 @@ final class DeepSeekTranslationService: TranslationService {
         }
 
         logger.debug("Translating \(uncached.count) uncached blocks")
-        print("[MGLT] DeepSeek model: \(model)")
+        print("[MGLT] DeepSeek model: \(modelName(for: settings))")
 
         // Batch and translate
         let batches = batcher.batch(uncached)
@@ -114,12 +114,12 @@ final class DeepSeekTranslationService: TranslationService {
 
     private func translateBatch(_ blocks: [TextBlock], apiKey: String, targetLanguage: String) async throws -> [(id: Int, translation: String)] {
         let messages = promptBuilder.buildMessages(blocks: blocks, targetLanguage: targetLanguage)
+        let settings = settingsStore.settings
 
         let requestBody: [String: Any] = [
-            "model": model,
+            "model": modelName(for: settings),
             "messages": messages,
             "response_format": ["type": "json_object"],
-            "thinking": ["type": "disabled"],
             "temperature": 0.3,
             "max_tokens": 8192,
             "stream": false
@@ -151,16 +151,16 @@ final class DeepSeekTranslationService: TranslationService {
               let choices = json["choices"] as? [[String: Any]],
               let firstChoice = choices.first,
               let message = firstChoice["message"] as? [String: Any],
-              let content = message["content"] as? String else {
+              let content = extractContent(from: message["content"]) else {
             let body = String(data: data, encoding: .utf8) ?? ""
             print("[MGLT] Invalid API response format. Body preview: \(body.prefix(1200))")
             throw TranslationError.invalidResponseFormat
         }
 
         if let finishReason = firstChoice["finish_reason"] as? String {
-            print("[MGLT] DeepSeek finish_reason: \(finishReason), content chars=\(content.count)")
+            print("[MGLT] finish_reason: \(finishReason), content chars=\(content.count)")
         }
-        print("[MGLT] DeepSeek content preview: \(content.prefix(1200))")
+        print("[MGLT] content preview: \(content.prefix(1200))")
 
         let parsed = resultParser.parse(content)
 
@@ -168,7 +168,35 @@ final class DeepSeekTranslationService: TranslationService {
             throw TranslationError.parseError(preview: String(content.prefix(1200)))
         }
 
+        // Guard against placeholder/template outputs: require full id coverage for this batch.
+        let expectedIDs = Set(blocks.map(\.id))
+        let receivedIDs = Set(parsed.translations.map(\.id))
+        guard expectedIDs == receivedIDs else {
+            throw TranslationError.parseError(preview: "ID mismatch. expected=\(expectedIDs.sorted()) received=\(receivedIDs.sorted()) content=\(String(content.prefix(600)))")
+        }
+
         return parsed.translations
+    }
+
+    private func modelName(for settings: AppSettings) -> String {
+        settings.deepSeekModelName.isEmpty ? "deepseek-v4-flash" : settings.deepSeekModelName
+    }
+
+    private func extractContent(from rawContent: Any?) -> String? {
+        if let content = rawContent as? String {
+            return content
+        }
+
+        if let parts = rawContent as? [[String: Any]] {
+            let text = parts.compactMap { part -> String? in
+                if let direct = part["text"] as? String { return direct }
+                if let type = part["type"] as? String, type == "text", let nested = part["text"] as? String { return nested }
+                return nil
+            }.joined(separator: "\n")
+            return text.isEmpty ? nil : text
+        }
+
+        return nil
     }
 }
 
@@ -182,7 +210,7 @@ enum TranslationError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .noAPIKey: return "No API key configured. Please set your DeepSeek API key in Settings."
+        case .noAPIKey: return "No API key configured for the selected provider. Please set it in Settings."
         case .invalidURL: return "Invalid API URL"
         case .invalidResponse: return "Invalid response from translation API"
         case .httpError(let code, _): return "API returned HTTP \(code)"

@@ -50,6 +50,11 @@ final class LensTranslationCoordinator {
         case failed(Error)
     }
 
+    private enum SnapshotCaptureMode {
+        case mainDisplay
+        case focusedWindow
+    }
+
     private struct OverlaySnapshot {
         let blocks: [OverlayTextBlock]
         let displayFrame: CGRect
@@ -88,12 +93,10 @@ final class LensTranslationCoordinator {
     func toggleTranslation() async {
         print("[MGLT] toggleTranslation called, state=\(coordinatorState)")
         switch coordinatorState {
-        case .idle:
+        case .idle, .showingOverlay:
             await startRegionTranslation()
         case .translating:
             cancelCurrentTask()
-        case .showingOverlay:
-            await clearOverlay()
         case .failed:
             clearError()
         }
@@ -102,14 +105,51 @@ final class LensTranslationCoordinator {
     func translateFullScreen() async {
         print("[MGLT] translateFullScreen called, state=\(coordinatorState)")
         switch coordinatorState {
-        case .idle:
-            await startSnapshotTranslation(selectedRegion: nil)
+        case .idle, .showingOverlay:
+            await startSnapshotTranslation(selectedRegion: nil, captureMode: .mainDisplay)
         case .translating:
             cancelCurrentTask()
-        case .showingOverlay:
-            await clearOverlay()
         case .failed:
             clearError()
+        }
+    }
+
+    func translateFocusedWindow() async {
+        print("[MGLT] translateFocusedWindow called, state=\(coordinatorState)")
+        switch coordinatorState {
+        case .idle, .showingOverlay:
+            await startSnapshotTranslation(selectedRegion: nil, captureMode: .focusedWindow)
+        case .translating:
+            cancelCurrentTask()
+        case .failed:
+            clearError()
+        }
+    }
+
+    func showRegionControlMode() {
+        print("[MGLT] showRegionControlMode called")
+        Task { @MainActor in
+            let controller = RegionControlWindowController.shared
+            controller.onTranslate = { [weak self] region in
+                Task {
+                    await self?.translateControlledRegion(region)
+                }
+            }
+            controller.onClear = { [weak self] in
+                Task {
+                    await self?.clearOverlay()
+                }
+            }
+            controller.onShowLast = { [weak self] in
+                Task {
+                    await self?.showLastOverlay()
+                }
+            }
+            controller.onClose = { [weak self] in
+                self?.publishStatus(title: "Idle", detail: "Region control mode closed", isWorking: false, isOverlayShowing: self?.overlayController.isShowing == true)
+            }
+            controller.show()
+            publishStatus(title: "Region mode", detail: "Adjust the capture region or use the floating toolbar", isWorking: false, isOverlayShowing: overlayController.isShowing)
         }
     }
 
@@ -145,6 +185,20 @@ final class LensTranslationCoordinator {
         print("[MGLT] Overlay cleared")
     }
 
+    private func translateControlledRegion(_ selectedRegion: SelectedScreenRegion) async {
+        print("[MGLT] translateControlledRegion called, state=\(coordinatorState), region=\(selectedRegion.localRect)")
+        if case .translating = coordinatorState {
+            cancelCurrentTask()
+            return
+        }
+
+        await startSnapshotTranslation(
+            selectedRegion: selectedRegion,
+            captureMode: .mainDisplay,
+            clearOverlayBeforeCapture: true
+        )
+    }
+
     private func startRegionTranslation() async {
         coordinatorState = .translating
         publishStatus(title: "Selecting region", detail: "Drag to choose the screen area to translate, or press Esc to cancel", isWorking: true, isOverlayShowing: false)
@@ -155,22 +209,34 @@ final class LensTranslationCoordinator {
             return
         }
 
-        await startSnapshotTranslation(selectedRegion: selectedRegion)
+        await startSnapshotTranslation(selectedRegion: selectedRegion, captureMode: .mainDisplay)
     }
 
-    private func startSnapshotTranslation(selectedRegion: SelectedScreenRegion?) async {
+    private func startSnapshotTranslation(
+        selectedRegion: SelectedScreenRegion?,
+        captureMode: SnapshotCaptureMode,
+        clearOverlayBeforeCapture: Bool = false
+    ) async {
         print("[MGLT] Starting snapshot translation...")
         let startTime = Date()
         var metrics = PerformanceMetrics.SnapshotMetrics()
 
         coordinatorState = .translating
         publishStatus(title: "Starting", detail: "Preparing translation pipeline", isWorking: true, isOverlayShowing: false)
+        await MainActor.run { overlayController.hide() }
 
         let task = Task {
             do {
                 // Check API key
-                publishStatus(title: "Checking API key", detail: "Loading DeepSeek API key from settings", isWorking: true, isOverlayShowing: false)
-                let apiKey = settingsStore.settings.deepSeekAPIKey
+                let provider = settingsStore.settings.selectedTranslationProvider
+                publishStatus(title: "Checking API key", detail: "Loading \(provider.displayName) API key from settings", isWorking: true, isOverlayShowing: false)
+                let apiKey: String
+                switch provider {
+                case .deepSeek:
+                    apiKey = settingsStore.settings.deepSeekAPIKey
+                case .qwenMtLite:
+                    apiKey = settingsStore.settings.qwenAPIKey
+                }
                 guard !apiKey.isEmpty else {
                     print("[MGLT] ERROR: No API key found")
                     await showError(CoordinatorError.noAPIKey)
@@ -193,10 +259,25 @@ final class LensTranslationCoordinator {
 
                 // Capture
                 print("[MGLT] Capturing screen...")
-                let captureDetail = selectedRegion == nil ? "Taking a screenshot of the target display" : "Taking a screenshot after region selection"
+                let captureDetail: String
+                switch captureMode {
+                case .mainDisplay:
+                    captureDetail = selectedRegion == nil ? "Taking a screenshot of the target display" : "Taking a screenshot after region selection"
+                case .focusedWindow:
+                    captureDetail = "Taking a screenshot of the focused window"
+                }
                 publishStatus(title: "Capturing screen", detail: captureDetail, isWorking: true, isOverlayShowing: false)
                 let captureStart = Date()
-                let screenshot = try await captureService.captureMainDisplay()
+                if clearOverlayBeforeCapture {
+                    await MainActor.run { overlayController.hide() }
+                }
+                let screenshot: ScreenshotResult
+                switch captureMode {
+                case .mainDisplay:
+                    screenshot = try await captureService.captureMainDisplay()
+                case .focusedWindow:
+                    screenshot = try await captureService.captureFocusedWindow()
+                }
                 metrics.captureDuration = Date().timeIntervalSince(captureStart)
                 print("[MGLT] Capture done: \(String(format: "%.0f", metrics.captureDuration * 1000))ms, size=\(Int(screenshot.pixelSize.width))x\(Int(screenshot.pixelSize.height))")
 
@@ -232,6 +313,9 @@ final class LensTranslationCoordinator {
                 }
                 metrics.mergedBlockCount = mergedBlocks.count
                 print("[MGLT] Merged: \(mergedBlocks.count) blocks")
+                for block in mergedBlocks {
+                    print("[MGLT] Block id=\(block.id), text=\(debugQuoted(block.sourceText)), frame=\(block.boundingBox)")
+                }
 
                 guard !mergedBlocks.isEmpty else {
                     let detail = selectedRegion == nil ? "OCR found text, but no blocks survived filtering" : "No OCR text blocks were inside the selected region"
@@ -244,8 +328,8 @@ final class LensTranslationCoordinator {
                 try Task.checkCancellation()
 
                 // Translate
-                print("[MGLT] Translating \(mergedBlocks.count) blocks via DeepSeek...")
-                publishStatus(title: "Calling DeepSeek", detail: "Sending \(mergedBlocks.count) text blocks for translation", isWorking: true, isOverlayShowing: false)
+                print("[MGLT] Translating \(mergedBlocks.count) blocks via \(provider.displayName)...")
+                publishStatus(title: "Calling \(provider.displayName)", detail: "Sending \(mergedBlocks.count) text blocks for translation", isWorking: true, isOverlayShowing: false)
                 let translationStart = Date()
                 let targetLanguage = settings.targetLanguage
                 let translatedBlocks = try await translationService.translate(mergedBlocks, targetLanguage: targetLanguage)
@@ -385,6 +469,10 @@ final class LensTranslationCoordinator {
             self?.onStatusChanged?(snapshot)
         }
     }
+
+    private func debugQuoted(_ text: String) -> String {
+        "\"\(text.replacingOccurrences(of: "\n", with: "\\n"))\""
+    }
 }
 
 enum CoordinatorError: LocalizedError {
@@ -393,7 +481,7 @@ enum CoordinatorError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .noAPIKey: return "No API key configured. Open Settings to add your DeepSeek API key."
+        case .noAPIKey: return "No API key configured. Open Settings to add an API key for the selected provider."
         case .noScreenRecordingPermission:
             return "Screen Recording permission is required for the currently running app. If macOS only captures the wallpaper and hides windows, remove MacGameLensTranslator from System Settings > Privacy & Security > Screen & System Audio Recording, add /Users/usr/Documents/play/MacGameLensTranslator.app again, turn it on, then quit and reopen the app."
         }

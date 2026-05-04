@@ -28,12 +28,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let cache = TranslationCache()
         let promptBuilder = TranslationPromptBuilder()
         let parser = TranslationResultParser()
-        let translationService = DeepSeekTranslationService(
+        let deepSeekTranslationService = DeepSeekTranslationService(
             promptBuilder: promptBuilder,
             resultParser: parser,
             batcher: batcher,
             cache: cache,
             settingsStore: settingsStore
+        )
+        let qwenMTTranslationService = QwenMTTranslationService(
+            batcher: batcher,
+            cache: cache,
+            settingsStore: settingsStore
+        )
+        let translationService = ProviderTranslationService(
+            settingsStore: settingsStore,
+            deepSeekService: deepSeekTranslationService,
+            qwenMTService: qwenMTTranslationService
         )
         let layoutEngine = OverlayLayoutEngine()
         let overlayController = OverlayWindowController()

@@ -35,6 +35,10 @@ final class SettingsViewModel: ObservableObject {
     let settingsStore = SettingsStore()
 
     @Published var deepSeekAPIKey: String
+    @Published var qwenAPIKey: String
+    @Published var selectedTranslationProvider: TranslationProvider
+    @Published var deepSeekModelName: String
+    @Published var qwenModelName: String
     @Published var targetLanguage: String
     @Published var sourceLanguage: String
     @Published var fontSizeScale: Double
@@ -47,6 +51,10 @@ final class SettingsViewModel: ObservableObject {
     init() {
         let s = SettingsStore().settings
         deepSeekAPIKey = s.deepSeekAPIKey
+        qwenAPIKey = s.qwenAPIKey
+        selectedTranslationProvider = s.selectedTranslationProvider
+        deepSeekModelName = s.deepSeekModelName
+        qwenModelName = s.qwenModelName
         targetLanguage = s.targetLanguage
         sourceLanguage = s.sourceLanguage
         fontSizeScale = s.fontSizeScale
@@ -60,6 +68,10 @@ final class SettingsViewModel: ObservableObject {
     func save() {
         var s = settingsStore.settings
         s.deepSeekAPIKey = deepSeekAPIKey
+        s.qwenAPIKey = qwenAPIKey
+        s.selectedTranslationProvider = selectedTranslationProvider
+        s.deepSeekModelName = deepSeekModelName
+        s.qwenModelName = qwenModelName
         s.targetLanguage = targetLanguage
         s.sourceLanguage = sourceLanguage
         s.fontSizeScale = fontSizeScale
@@ -153,8 +165,21 @@ struct APISettingsTab: View {
 
     var body: some View {
         Form {
-            Section(header: Text("DeepSeek API Key")) {
-                SecureField("Enter API Key", text: $viewModel.deepSeekAPIKey)
+            Section(header: Text("Translation Provider")) {
+                Picker("Provider", selection: $viewModel.selectedTranslationProvider) {
+                    ForEach(TranslationProvider.allCases, id: \.self) { provider in
+                        Text(provider.displayName).tag(provider)
+                    }
+                }
+                .onChange(of: viewModel.selectedTranslationProvider) { _ in viewModel.save() }
+            }
+
+            Section(header: Text("DeepSeek")) {
+                TextField("Model", text: $viewModel.deepSeekModelName)
+                    .textFieldStyle(.roundedBorder)
+                    .onChange(of: viewModel.deepSeekModelName) { _ in viewModel.save() }
+
+                TextField("Enter API Key", text: $viewModel.deepSeekAPIKey)
                     .textFieldStyle(.roundedBorder)
                     .onChange(of: viewModel.deepSeekAPIKey) { _ in viewModel.save() }
 
@@ -169,8 +194,30 @@ struct APISettingsTab: View {
                 }
             }
 
+            Section(header: Text("Qwen MT Lite (Bailian)")) {
+                TextField("Model", text: $viewModel.qwenModelName)
+                    .textFieldStyle(.roundedBorder)
+                    .onChange(of: viewModel.qwenModelName) { _ in viewModel.save() }
+
+                TextField("Enter API Key", text: $viewModel.qwenAPIKey)
+                    .textFieldStyle(.roundedBorder)
+                    .onChange(of: viewModel.qwenAPIKey) { _ in viewModel.save() }
+
+                if !viewModel.qwenAPIKey.isEmpty {
+                    Text("API Key saved (\(viewModel.qwenAPIKey.count) chars)")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                } else {
+                    Text("No API Key configured")
+                        .font(.caption)
+                        .foregroundColor(.red)
+                }
+            }
+
             Section(header: Text("Get API Key")) {
                 Link("DeepSeek Platform", destination: URL(string: "https://platform.deepseek.com/api_keys")!)
+                    .font(.caption)
+                Link("Qwen MT Lite (Bailian)", destination: URL(string: "https://bailian.console.aliyun.com/cn-beijing?tab=model#/model-market/detail/qwen-mt-lite?serviceSite=asia-pacific-china")!)
                     .font(.caption)
             }
         }

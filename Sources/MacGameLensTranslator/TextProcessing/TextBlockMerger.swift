@@ -119,7 +119,7 @@ struct TextBlockMerger {
         guard minWidth > 0 else { return false }
         let overlapRatio = overlapWidth / minWidth
 
-        if overlapRatio < config.horizontalOverlapRatio {
+        if overlapRatio < config.horizontalOverlapRatio && !areSameLineAdjacent(newFrame, existingFrame) {
             return false
         }
 
@@ -134,5 +134,27 @@ struct TextBlockMerger {
         }
 
         return true
+    }
+
+    private func areSameLineAdjacent(_ a: CGRect, _ b: CGRect) -> Bool {
+        let minHeight = min(a.height, b.height)
+        let maxHeight = max(a.height, b.height)
+        guard minHeight > 0 else { return false }
+
+        let verticalOverlap = max(0, min(a.maxY, b.maxY) - max(a.minY, b.minY))
+        let verticalOverlapRatio = verticalOverlap / minHeight
+        guard verticalOverlapRatio >= 0.55 else { return false }
+
+        let horizontalGap: CGFloat
+        if a.maxX <= b.minX {
+            horizontalGap = b.minX - a.maxX
+        } else if b.maxX <= a.minX {
+            horizontalGap = a.minX - b.maxX
+        } else {
+            horizontalGap = 0
+        }
+
+        let maxGap = max(maxHeight * 2.5, 48)
+        return horizontalGap <= maxGap
     }
 }

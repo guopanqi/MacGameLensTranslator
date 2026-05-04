@@ -77,6 +77,9 @@ SIGN_IDENTITY="${MGLT_CODESIGN_IDENTITY:-}"
 if [ -z "${SIGN_IDENTITY}" ]; then
     SIGN_IDENTITY="$(security find-identity -v -p codesigning 2>/dev/null | awk -F '\"' '/[0-9A-F]{40}/ { print $2; exit }' || true)"
 fi
+if [ -z "${SIGN_IDENTITY}" ] && security find-certificate -c "MacGameLensTranslator Local Code Signing" login.keychain-db >/dev/null 2>&1; then
+    SIGN_IDENTITY="MacGameLensTranslator Local Code Signing"
+fi
 
 if [ -n "${SIGN_IDENTITY}" ]; then
     echo "Signing with identity: ${SIGN_IDENTITY}"
