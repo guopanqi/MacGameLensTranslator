@@ -10,8 +10,8 @@ struct OverlayLayoutEngine {
 
     init(
         minWidth: CGFloat = 160,
-        maxWidth: CGFloat = 420,
-        verticalGap: CGFloat = 4,
+        maxWidth: CGFloat = 560,
+        verticalGap: CGFloat = 8,
         screenMargin: CGFloat = 8,
         fontSizeScale: Double = 1.0
     ) {
@@ -25,26 +25,30 @@ struct OverlayLayoutEngine {
     func layout(_ blocks: [TextBlock], displayFrame: CGRect) -> [OverlayTextBlock] {
         let displayHeight = displayFrame.height
 
-        return blocks.compactMap { block in
+        var laidOutBlocks: [OverlayTextBlock] = []
+
+        for block in blocks {
             guard let translatedText = block.translatedText, !translatedText.isEmpty else {
-                return nil
+                continue
             }
 
             let sourceFrame = block.boundingBox
 
-            // Calculate preferred overlay position (below source text)
+            // Prefer covering the source text area instead of adding another
+            // row below it. This keeps dense game manuals readable and avoids
+            // cascading translations over the next paragraph.
             var overlayX = sourceFrame.minX
-            var overlayY = sourceFrame.maxY + verticalGap
+            var overlayY = sourceFrame.minY
 
-            let preferredWidth = max(sourceFrame.width * 1.5, minWidth)
+            let preferredWidth = max(sourceFrame.width + 24, minWidth)
             let overlayWidth = min(preferredWidth, maxWidth)
 
             // Estimate height based on text
-            let overlayHeight = estimateHeight(for: translatedText, width: overlayWidth)
+            let overlayHeight = max(estimateHeight(for: translatedText, width: overlayWidth), sourceFrame.height + 8)
 
             // If the overlay goes below the screen, place it above
             if overlayY + overlayHeight > displayHeight - screenMargin {
-                overlayY = sourceFrame.minY - overlayHeight - verticalGap
+                overlayY = sourceFrame.maxY - overlayHeight
             }
 
             // Clamp left/right within screen
@@ -60,16 +64,19 @@ struct OverlayLayoutEngine {
                 overlayY = screenMargin
             }
 
-            let overlayFrame = CGRect(x: overlayX, y: overlayY, width: overlayWidth, height: overlayHeight)
+            var overlayFrame = CGRect(x: overlayX, y: overlayY, width: overlayWidth, height: overlayHeight)
+            overlayFrame = avoidOverlaps(for: overlayFrame, existing: laidOutBlocks.map(\.overlayFrame), displayHeight: displayHeight)
 
-            return OverlayTextBlock(
+            laidOutBlocks.append(OverlayTextBlock(
                 id: block.id,
                 sourceText: block.sourceText,
                 translatedText: translatedText,
                 sourceFrame: sourceFrame,
                 overlayFrame: overlayFrame
-            )
+            ))
         }
+
+        return laidOutBlocks
     }
 
     private func estimateHeight(for text: String, width: CGFloat) -> CGFloat {
@@ -80,5 +87,24 @@ struct OverlayLayoutEngine {
         let scaledLineHeight = baseLineHeight * fontSizeScale
         let padding: CGFloat = 12
         return CGFloat(lines) * scaledLineHeight + padding
+    }
+
+    private func avoidOverlaps(for frame: CGRect, existing: [CGRect], displayHeight: CGFloat) -> CGRect {
+        var adjusted = frame
+        let maxPasses = 24
+
+        for _ in 0..<maxPasses {
+            guard let overlap = existing.first(where: { $0.intersects(adjusted.insetBy(dx: -2, dy: -verticalGap)) }) else {
+                return adjusted
+            }
+
+            adjusted.origin.y = overlap.maxY + verticalGap
+            if adjusted.maxY > displayHeight - screenMargin {
+                adjusted.origin.y = max(screenMargin, frame.minY - adjusted.height - verticalGap)
+                return adjusted
+            }
+        }
+
+        return adjusted
     }
 }

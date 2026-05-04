@@ -25,6 +25,7 @@ final class LensTranslationCoordinator {
 
     private var currentTask: Task<Void, Never>?
     private var coordinatorState: CoordinatorState = .idle
+    private var lastOverlaySnapshot: OverlaySnapshot?
     private var lastStatus = StatusSnapshot(
         title: "Idle",
         detail: "Ready",
@@ -47,6 +48,15 @@ final class LensTranslationCoordinator {
         case translating
         case showingOverlay
         case failed(Error)
+    }
+
+    private struct OverlaySnapshot {
+        let blocks: [OverlayTextBlock]
+        let displayFrame: CGRect
+        let debugMode: Bool
+        let opacity: Double
+        let fontSizeScale: Double
+        let levelMode: OverlayLevelMode
     }
 
     init(
@@ -79,13 +89,52 @@ final class LensTranslationCoordinator {
         print("[MGLT] toggleTranslation called, state=\(coordinatorState)")
         switch coordinatorState {
         case .idle:
-            await startSnapshotTranslation()
+            await startRegionTranslation()
         case .translating:
             cancelCurrentTask()
         case .showingOverlay:
             await clearOverlay()
         case .failed:
             clearError()
+        }
+    }
+
+    func translateFullScreen() async {
+        print("[MGLT] translateFullScreen called, state=\(coordinatorState)")
+        switch coordinatorState {
+        case .idle:
+            await startSnapshotTranslation(selectedRegion: nil)
+        case .translating:
+            cancelCurrentTask()
+        case .showingOverlay:
+            await clearOverlay()
+        case .failed:
+            clearError()
+        }
+    }
+
+    func showLastOverlay() async {
+        guard let snapshot = lastOverlaySnapshot else {
+            publishStatus(title: "No saved overlay", detail: "There is no previous overlay to show", isWorking: false, isOverlayShowing: false)
+            return
+        }
+
+        let didShow = await MainActor.run {
+            overlayController.show(
+                blocks: snapshot.blocks,
+                displayFrame: snapshot.displayFrame,
+                debugMode: snapshot.debugMode,
+                opacity: snapshot.opacity,
+                fontSizeScale: snapshot.fontSizeScale,
+                levelMode: snapshot.levelMode
+            )
+        }
+
+        if didShow {
+            coordinatorState = .showingOverlay
+            publishStatus(title: "Overlay showing", detail: "Redisplayed \(snapshot.blocks.count) saved text blocks", isWorking: false, isOverlayShowing: true)
+        } else {
+            publishStatus(title: "Overlay failed", detail: "Saved overlay could not be shown", isWorking: false, isOverlayShowing: false)
         }
     }
 
@@ -96,7 +145,20 @@ final class LensTranslationCoordinator {
         print("[MGLT] Overlay cleared")
     }
 
-    private func startSnapshotTranslation() async {
+    private func startRegionTranslation() async {
+        coordinatorState = .translating
+        publishStatus(title: "Selecting region", detail: "Drag to choose the screen area to translate, or press Esc to cancel", isWorking: true, isOverlayShowing: false)
+
+        guard let selectedRegion = await AreaSelectionWindowController.shared.selectRegion() else {
+            coordinatorState = .idle
+            publishStatus(title: "Idle", detail: "Region selection cancelled", isWorking: false, isOverlayShowing: false)
+            return
+        }
+
+        await startSnapshotTranslation(selectedRegion: selectedRegion)
+    }
+
+    private func startSnapshotTranslation(selectedRegion: SelectedScreenRegion?) async {
         print("[MGLT] Starting snapshot translation...")
         let startTime = Date()
         var metrics = PerformanceMetrics.SnapshotMetrics()
@@ -131,7 +193,8 @@ final class LensTranslationCoordinator {
 
                 // Capture
                 print("[MGLT] Capturing screen...")
-                publishStatus(title: "Capturing screen", detail: "Taking a screenshot of the main display", isWorking: true, isOverlayShowing: false)
+                let captureDetail = selectedRegion == nil ? "Taking a screenshot of the target display" : "Taking a screenshot after region selection"
+                publishStatus(title: "Capturing screen", detail: captureDetail, isWorking: true, isOverlayShowing: false)
                 let captureStart = Date()
                 let screenshot = try await captureService.captureMainDisplay()
                 metrics.captureDuration = Date().timeIntervalSince(captureStart)
@@ -162,9 +225,21 @@ final class LensTranslationCoordinator {
 
                 // Merge
                 publishStatus(title: "Merging text", detail: "Combining nearby text into translation blocks", isWorking: true, isOverlayShowing: false)
-                let mergedBlocks = merger.merge(filteredObservations, pixelSize: screenshot.pixelSize, scaleFactor: screenshot.scaleFactor)
+                var mergedBlocks = merger.merge(filteredObservations, pixelSize: screenshot.pixelSize, scaleFactor: screenshot.scaleFactor)
+                if let selectedRegion {
+                    mergedBlocks = filterBlocks(mergedBlocks, inside: selectedRegion, screenshot: screenshot)
+                    print("[MGLT] Region filter: \(mergedBlocks.count) blocks inside selected region \(selectedRegion.localRect)")
+                }
                 metrics.mergedBlockCount = mergedBlocks.count
                 print("[MGLT] Merged: \(mergedBlocks.count) blocks")
+
+                guard !mergedBlocks.isEmpty else {
+                    let detail = selectedRegion == nil ? "OCR found text, but no blocks survived filtering" : "No OCR text blocks were inside the selected region"
+                    publishStatus(title: "No selected text", detail: detail, isWorking: false, isOverlayShowing: false)
+                    await showAlert(title: "No selected text", message: "\(detail).\n\nLast screenshot: /tmp/mglt_last_capture.png")
+                    coordinatorState = .idle
+                    return
+                }
 
                 try Task.checkCancellation()
 
@@ -217,6 +292,14 @@ final class LensTranslationCoordinator {
                     return
                 }
 
+                lastOverlaySnapshot = OverlaySnapshot(
+                    blocks: overlayBlocks,
+                    displayFrame: screenshot.displayFrame,
+                    debugMode: settings.debugModeEnabled,
+                    opacity: settings.overlayOpacity,
+                    fontSizeScale: settings.fontSizeScale,
+                    levelMode: settings.overlayLevelMode
+                )
                 coordinatorState = .showingOverlay
                 publishStatus(title: "Overlay showing", detail: "Displayed \(overlayBlocks.count) translated text blocks", isWorking: false, isOverlayShowing: true)
                 metrics.timestamp = Date()
@@ -240,7 +323,21 @@ final class LensTranslationCoordinator {
         currentTask = task
     }
 
+    private func filterBlocks(_ blocks: [TextBlock], inside selectedRegion: SelectedScreenRegion, screenshot: ScreenshotResult) -> [TextBlock] {
+        guard screenshot.displayFrame.equalTo(selectedRegion.displayFrame) else {
+            print("[MGLT] WARNING: Selected screen frame \(selectedRegion.displayFrame) differs from captured frame \(screenshot.displayFrame); applying local region anyway")
+            return blocks.filter { $0.boundingBox.intersects(selectedRegion.localRect) }
+        }
+
+        return blocks.filter { block in
+            block.boundingBox.intersects(selectedRegion.localRect)
+        }
+    }
+
     private func cancelCurrentTask() {
+        Task { @MainActor in
+            AreaSelectionWindowController.shared.cancelSelection()
+        }
         currentTask?.cancel()
         currentTask = nil
         coordinatorState = .idle

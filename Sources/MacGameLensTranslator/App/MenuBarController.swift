@@ -48,14 +48,23 @@ final class MenuBarController {
 
         menu.addItem(NSMenuItem.separator())
 
-        let translateItem = NSMenuItem(title: "Translate Screen", action: #selector(triggerTranslate), keyEquivalent: "t")
+        let translateItem = NSMenuItem(title: "Translate Region", action: #selector(triggerTranslate), keyEquivalent: "t")
         translateItem.keyEquivalentModifierMask = [.command, .shift]
         translateItem.target = self
         menu.addItem(translateItem)
 
+        let fullScreenItem = NSMenuItem(title: "Translate Full Screen", action: #selector(triggerFullScreenTranslate), keyEquivalent: "f")
+        fullScreenItem.keyEquivalentModifierMask = [.command, .shift]
+        fullScreenItem.target = self
+        menu.addItem(fullScreenItem)
+
         let clearItem = NSMenuItem(title: "Clear Overlay", action: #selector(triggerClear), keyEquivalent: "")
         clearItem.target = self
         menu.addItem(clearItem)
+
+        let showLastItem = NSMenuItem(title: "Show Last Overlay", action: #selector(triggerShowLastOverlay), keyEquivalent: "")
+        showLastItem.target = self
+        menu.addItem(showLastItem)
 
         menu.addItem(NSMenuItem.separator())
 
@@ -92,10 +101,25 @@ final class MenuBarController {
     }
 
     @objc private func triggerTranslate() {
-        print("[MacGameLens] Translate triggered from menu")
+        print("[MacGameLens] Region translate triggered from menu")
         statusItem?.button?.title = "⟳"
         Task { 
             await coordinator?.toggleTranslation()
+            await MainActor.run {
+                if let latestStatus {
+                    updateStatus(latestStatus)
+                } else {
+                    statusItem?.button?.title = coordinator?.isIdle == true ? "译" : "..."
+                }
+            }
+        }
+    }
+
+    @objc private func triggerFullScreenTranslate() {
+        print("[MacGameLens] Full screen translate triggered from menu")
+        statusItem?.button?.title = "⟳"
+        Task {
+            await coordinator?.translateFullScreen()
             await MainActor.run {
                 if let latestStatus {
                     updateStatus(latestStatus)
@@ -112,6 +136,18 @@ final class MenuBarController {
             await coordinator?.clearOverlay()
             await MainActor.run {
                 statusItem?.button?.title = "译"
+            }
+        }
+    }
+
+    @objc private func triggerShowLastOverlay() {
+        print("[MacGameLens] Show last overlay triggered")
+        Task {
+            await coordinator?.showLastOverlay()
+            await MainActor.run {
+                if let latestStatus {
+                    updateStatus(latestStatus)
+                }
             }
         }
     }

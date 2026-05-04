@@ -20,10 +20,9 @@ final class OverlayLayoutEngineTests: XCTestCase {
 
         XCTAssertEqual(result.count, 1)
         let overlay = result[0]
-        // Overlay should be positioned below the source text
+        // Overlay should cover the source text area rather than adding a new row below it
         XCTAssertEqual(overlay.overlayFrame.origin.x, 100, accuracy: 0.1)
-        // y = source.maxY + verticalGap = 520 + 4 = 524
-        XCTAssertEqual(overlay.overlayFrame.origin.y, 524, accuracy: 1.0)
+        XCTAssertEqual(overlay.overlayFrame.origin.y, 500, accuracy: 1.0)
     }
 
     func testTranslationAboveWhenBelowOverflows() {
@@ -43,8 +42,8 @@ final class OverlayLayoutEngineTests: XCTestCase {
 
         XCTAssertEqual(result.count, 1)
         let overlay = result[0]
-        // Overlay should be positioned above (y < source.minY)
-        XCTAssertLessThan(overlay.overlayFrame.maxY, block.boundingBox.minY)
+        // Overlay should stay within the display even when source text is near the bottom.
+        XCTAssertLessThanOrEqual(overlay.overlayFrame.maxY, displayFrame.height)
     }
 
     func testRightEdgeClampedToScreen() {
